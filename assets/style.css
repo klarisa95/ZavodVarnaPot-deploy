@@ -1,0 +1,64 @@
+* { box-sizing: border-box; }
+
+body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+
+/* ── scrollbar ───────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: #f1f1f1; }
+::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+
+/* ── year dropdown ───────────────────────────────────────── */
+.year-dd .Select-control {
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+/* ── filter pill buttons ─────────────────────────────────── */
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 14px;
+    border-radius: 20px;
+    border: 1.5px solid #ddd;
+    background: white;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: #555;
+    transition: background 0.12s, border-color 0.12s;
+    line-height: 1;
+}
+.pill:hover { border-color: #aaa; }
+.pill.active { background: #eef0ee; border-color: #aaa; }
+.pill-green .dot { color: #4caf50; }
+.pill-amber .dot { color: #f0a500; }
+.pill-red   .dot { color: #e53935; }
+
+/* ── municipality table ──────────────────────────────────── */
+.muni-table { font-size: 13px; }
+.muni-header {
+    display: flex;
+    padding: 8px 12px;
+    background: #f5f5f5;
+    border-bottom: 2px solid #ddd;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    font-weight: 600;
+    font-size: 12px;
+    color: #555;
+}
+.muni-row {
+    display: flex;
+    padding: 7px 12px;
+    border-bottom: 1px solid #f0f0f0;
+    align-items: center;
+}
+.muni-row:hover { background: #fafafa; }
+.muni-name { flex: 1; }
+.muni-level { width: 90px; text-align: right; }
+
+/* ── distribution chart ──────────────────────────────────── */
+.js-plotly-plot .plotly { background: white !important; }

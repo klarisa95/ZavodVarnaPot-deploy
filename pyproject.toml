@@ -1,0 +1,16 @@
+[project]
+name = "zavodvarnapot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "dash>=4.0.0",
+    "dash-bootstrap-components>=2.0.4",
+    "geojson>=3.2.0",
+    "nbformat>=5.10.4",
+    "openpyxl>=3.1.5",
+    "pandas>=2.3.3",
+    "plotly>=6.6.0",
+    "streamlit>=1.40.0",
+]
