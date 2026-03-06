@@ -32,9 +32,17 @@ COLOR_SCALE = [
 ]
 
 DF         = pd.read_csv(DATA_PATH, index_col=0)
-ALL_YEARS  = sorted(DF["leto"].unique().tolist())
+ALL_YEARS  = sorted([y for y in DF["leto"].unique() if str(y).isdigit()])
 COLORS     = {"Nizka": "#52b788", "Srednja": "#f4a261", "Visoka": "#e63946"}
 ALL_LEVELS = ["Nizka", "Srednja", "Visoka"]
+
+_df_years = DF[DF["leto"].apply(lambda x: str(x).isdigit())].copy()
+_df_years["Stopnja"] = _df_years["index"].apply(
+    lambda v: "Nizka" if v == 0 else ("Srednja" if v == 1 else "Visoka")
+)
+TREND_DF = _df_years.groupby(["leto", "Stopnja"]).size().reset_index(name="count")
+_totals = _df_years.groupby("leto")["Občina"].count()
+TREND_DF["pct"] = TREND_DF.apply(lambda r: r["count"] / _totals[r["leto"]] * 100, axis=1)
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def compute_stopnja(df_in):
@@ -45,6 +53,11 @@ def compute_stopnja(df_in):
         lambda v: "Nizka" if v == 0 else ("Srednja" if v == 1 else "Visoka")
     )
     return df
+
+
+def get_df(leto, mode):
+    key = "2021-2025" if mode == "obdobje" else leto
+    return compute_stopnja(DF[DF["leto"] == key])
 
 
 def build_map(df_leto):
@@ -60,10 +73,10 @@ def build_map(df_leto):
         center={"lat": 46.12, "lon": 14.95},
         mapbox_style="carto-positron",
         hover_name="Občina",
-        hover_data={"index": ":.2f", "Stopnja": True, "Občina": False},
-        labels={"index": "Vrednost", "Stopnja": "Stopnja"},
+        hover_data={"index": False, "Stopnja": True, "Št. smrti": True, "Št. hudih telesnih poškodb": True,"Št. lažjih telesnih poškodb": True, "Občina": False},
+        labels={"index": "Vrednost", "Stopnja": "Stopnja", "Št. smrti": "Št. smrti", "Huda telesna poškodba": "Št. težje poškodovanih", "Lažja telesna poškodba": "Št. lažje poškodovanih"},
     )
-    fig.update_traces(marker_line_width=0.4, marker_line_color="#888")
+    fig.update_traces(marker_line_width=0.4, marker_line_color="#888", marker_opacity=0.5)
     fig.update_layout(
         margin={"r": 0, "t": 0, "l": 0, "b": 0},
         coloraxis_showscale=False,
@@ -150,6 +163,17 @@ app.layout = html.Div(
                     ],
                 ),
 
+
+                dcc.RadioItems(
+                    id="mode-radio",
+                    options=[
+                        {"label": " Posamezno leto", "value": "leto"},
+                        {"label": f" Celotno obdobje ({ALL_YEARS[0]}–{ALL_YEARS[-1]})", "value": "obdobje"},
+                    ],
+                    value="leto",
+                    inline=True,
+                    style={"fontSize": "13px", "marginBottom": "8px", "color": "#333"},
+                ),
 
                 dcc.Dropdown(
                     id="year-dd",
@@ -337,12 +361,20 @@ def toggle_level(n1, n2, n3, active):
 
 
 @app.callback(
+    Output("year-dd", "disabled"),
+    Input("mode-radio", "value"),
+)
+def toggle_year_dd(mode):
+    return mode == "obdobje"
+
+
+@app.callback(
     Output("map-graph", "figure"),
     Input("year-dd",    "value"),
+    Input("mode-radio", "value"),
 )
-def update_map(leto):
-    df_leto = compute_stopnja(DF[DF["leto"] == leto])
-    return build_map(df_leto)
+def update_map(leto, mode):
+    return build_map(get_df(leto, mode))
 
 
 @app.callback(
@@ -353,15 +385,21 @@ def update_map(leto):
     Output("dist-chart",   "figure"),
     Output("footer-year",  "children"),
     Input("year-dd",      "value"),
+    Input("mode-radio",   "value"),
     Input("level-store",  "data"),
     Input("search",       "value"),
 )
-def update_ui(leto, active_levels, search):
+def update_ui(leto, mode, active_levels, search):
     active_levels = active_levels or []
 
-    subtitle = f"Vizija NIČ · Podatki {leto}"
+    if mode == "obdobje":
+        period_label = f"{ALL_YEARS[0]}–{ALL_YEARS[-1]}"
+        subtitle = f"Vizija NIČ · Obdobje {period_label}"
+    else:
+        period_label = str(leto)
+        subtitle = f"Vizija NIČ · Podatki {leto}"
 
-    df_leto   = compute_stopnja(DF[DF["leto"] == leto])
+    df_leto   = get_df(leto, mode)
     n_total   = len(df_leto)
     n_nizka   = int((df_leto["Stopnja"] == "Nizka").sum())
     n_srednja = int((df_leto["Stopnja"] == "Srednja").sum())
@@ -382,40 +420,67 @@ def update_ui(leto, active_levels, search):
     if search:
         df_f = df_f[df_f["Občina"].str.contains(search, case=False, na=False)]
 
+    # previous year lookup (only in "leto" mode)
+    prev_idx = ALL_YEARS.index(leto) - 1 if mode == "leto" and leto in ALL_YEARS else -1
+    if prev_idx >= 0:
+        prev_leto = ALL_YEARS[prev_idx]
+        prev_map = (
+            compute_stopnja(DF[DF["leto"] == prev_leto])
+            .set_index("Občina")["Stopnja"]
+            .to_dict()
+        )
+    else:
+        prev_map = {}
+
+    show_prev = mode == "leto" and prev_idx >= 0
+
     header = html.Div(
         [html.Div("Občina", className="muni-name"),
+         *([ html.Div("Stopnja lani", className="muni-level",
+                      style={"color": "#aaa"}) ] if show_prev else []),
          html.Div("Stopnja", className="muni-level")],
         className="muni-header",
     )
     rows = [header]
     for _, row in df_f.iterrows():
         c = COLORS[row["Stopnja"]]
+        prev_stopnja = prev_map.get(row["Občina"])
+        cp = COLORS.get(prev_stopnja, "#aaa") if prev_stopnja else "#aaa"
         rows.append(html.Div([
             html.Div(row["Občina"], className="muni-name"),
+            *([ html.Div(
+                    [html.Span("● ", style={"color": cp}), prev_stopnja] if prev_stopnja else "–",
+                    className="muni-level", style={"color": cp, "opacity": "0.6"},
+                ) ] if show_prev else []),
             html.Div([html.Span("● ", style={"color": c}), row["Stopnja"]],
                      className="muni-level", style={"color": c}),
         ], className="muni-row"))
     table = html.Div(rows)
     count = f"Prikazanih {len(df_f)} od {n_total} občin"
 
-    max_y = max(n_nizka, n_srednja, n_visoka, 1)
-    bar = go.Figure(go.Bar(
-        x=["Nizka", "Srednja", "Visoka"],
-        y=[n_nizka, n_srednja, n_visoka],
-        marker_color=[COLORS["Nizka"], COLORS["Srednja"], COLORS["Visoka"]],
-        text=[n_nizka, n_srednja, n_visoka],
-        textposition="outside",
-        width=0.5,
-    ))
+    bar = go.Figure()
+    for lvl in ALL_LEVELS:
+        df_lvl = TREND_DF[TREND_DF["Stopnja"] == lvl]
+        bar.add_trace(go.Scatter(
+            x=df_lvl["leto"], y=df_lvl["pct"].round(1),
+            mode="lines+markers",
+            name=lvl,
+            line={"color": COLORS[lvl], "width": 2},
+            marker={"size": 5},
+        ))
     bar.update_layout(
-        margin={"l": 10, "r": 10, "t": 20, "b": 30},
+        margin={"l": 10, "r": 10, "t": 10, "b": 30},
         paper_bgcolor="white", plot_bgcolor="white",
-        showlegend=False, height=160,
-        yaxis={"visible": False, "range": [0, max_y * 1.25]},
-        xaxis={"showgrid": False, "tickfont": {"size": 13}},
+        showlegend=True, height=160,
+        legend={"orientation": "h", "y": 1.2, "x": 0.5, "xanchor": "center",
+                "font": {"size": 11}},
+        yaxis={"showgrid": True, "gridcolor": "#eee", "tickfont": {"size": 11},
+               "ticksuffix": "%", "range": [20, 50]},
+        xaxis={"showgrid": False, "tickfont": {"size": 11},
+               "tickvals": ALL_YEARS, "ticktext": [str(y) for y in ALL_YEARS]},
     )
 
-    footer = f"Podatki za leto {leto} · Slovenija"
+    footer = f"Podatki za obdobje {period_label} · Slovenija"
     return subtitle, cards, table, count, bar, footer
 
 
