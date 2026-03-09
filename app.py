@@ -10,7 +10,7 @@ BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH    = os.path.join(BASE_DIR, "data_izpis.csv")
 GEOJSON_PATH = os.path.join(BASE_DIR, "OB.geojson")
 
-app = Dash(__name__, title="Zavod Varna Pot")
+app = Dash(__name__, title="Zavod Varna Pot", suppress_callback_exceptions=True)
 server = app.server
 
 # ── static data ────────────────────────────────────────────────────────────────
@@ -44,6 +44,15 @@ TREND_DF = _df_years.groupby(["leto", "Stopnja"]).size().reset_index(name="count
 _totals = _df_years.groupby("leto")["Občina"].count()
 TREND_DF["pct"] = TREND_DF.apply(lambda r: r["count"] / _totals[r["leto"]] * 100, axis=1)
 
+SORT_COL_MAP = {
+    "sort-obcina":  "Občina",
+    "sort-stopnja": "Stopnja",
+    "sort-smrti":   "Št. smrti",
+    "sort-prebiv":  "Število prebivalcev",
+    "sort-hude":    "Št. hudih telesnih poškodb",
+}
+STOPNJA_ORDER = {"Nizka": 0, "Srednja": 1, "Visoka": 2}
+
 # ── helpers ────────────────────────────────────────────────────────────────────
 def compute_stopnja(df_in):
     df   = df_in.copy()
@@ -73,15 +82,25 @@ def build_map(df_leto):
         center={"lat": 46.12, "lon": 14.95},
         mapbox_style="carto-positron",
         hover_name="Občina",
-        hover_data={"index": False, "Stopnja": True, "Št. smrti": True, "Št. hudih telesnih poškodb": True,"Št. lažjih telesnih poškodb": True, "Občina": False},
+        hover_data={"index": False, "Stopnja": False, "Št. smrti": False, "Št. hudih telesnih poškodb": False, "Št. lažjih telesnih poškodb": False, "Občina": False},
         labels={"index": "Vrednost", "Stopnja": "Stopnja", "Št. smrti": "Št. smrti", "Huda telesna poškodba": "Št. težje poškodovanih", "Lažja telesna poškodba": "Št. lažje poškodovanih"},
     )
-    fig.update_traces(marker_line_width=0.4, marker_line_color="#888", marker_opacity=0.5)
+    fig.update_traces(
+        marker_line_width=0.4, marker_line_color="#888", marker_opacity=0.5,
+        selected_marker_opacity=0.5,
+        unselected_marker_opacity=0.5,
+    )
     fig.update_layout(
         margin={"r": 0, "t": 0, "l": 0, "b": 0},
         coloraxis_showscale=False,
         uirevision="map",
         dragmode=False,
+        hoverlabel=dict(
+            bgcolor="white",
+            bordercolor="#ddd",
+            font_color="#333",
+            font_size=10,
+        ),
     )
     return fig
 
@@ -119,7 +138,7 @@ app.layout = html.Div(
         # ── LEFT PANEL ────────────────────────────────────────────────────────
         html.Div(
             style={
-                "width": "440px", "flexShrink": "0",
+                "width": "520px", "flexShrink": "0",
                 "overflowY": "auto", "height": "100vh",
                 "padding": "14px 16px", "borderRight": "1px solid #e0e0e0",
             },
@@ -231,6 +250,7 @@ app.layout = html.Div(
                 }),
 
                 dcc.Store(id="level-store", data=ALL_LEVELS),
+                dcc.Store(id="sort-store", data={"col": "Občina", "asc": True}),
                 html.Div(
                     style={"display": "flex", "gap": "8px", "marginBottom": "10px", "flexWrap": "wrap"},
                     children=[
@@ -293,10 +313,60 @@ app.layout = html.Div(
         ),
 
         # ── RIGHT PANEL – choropleth map ──────────────────────────────────────
-        dcc.Graph(
-            id="map-graph",
-            config={"scrollZoom": True, "displayModeBar": False},
-            style={"flex": "1", "height": "100vh"},
+        html.Div(
+            style={"flex": "1", "position": "relative", "height": "100vh"},
+            children=[
+                dcc.Graph(
+                    id="map-graph",
+                    config={"scrollZoom": True, "displayModeBar": False,
+                            "showAxisDragHandles": False},
+                    style={"width": "100%", "height": "100vh"},
+                    clear_on_unhover=True,
+                ),
+
+                # ── map click popup ────────────────────────────────────────
+                html.Div(
+                    id="map-popup",
+                    style={"display": "none"},
+                    className="map-popup",
+                    children=[
+                        html.Div(
+                            style={
+                                "background": "white", "borderRadius": "10px 10px 0 0",
+                                "padding": "14px 16px 12px", "position": "relative",
+                                "borderBottom": "1px solid #eee",
+                            },
+                            children=[
+                                html.Button(
+                                    "×",
+                                    id="map-popup-close",
+                                    n_clicks=0,
+                                    style={
+                                        "position": "absolute", "top": "8px", "right": "10px",
+                                        "background": "none", "border": "none",
+                                        "color": "#aaa", "fontSize": "20px",
+                                        "cursor": "pointer", "lineHeight": "1", "padding": "2px 6px",
+                                    },
+                                ),
+                                html.Div(id="popup-muni-name",
+                                         style={"fontSize": "17px", "fontWeight": "700",
+                                                "color": "#333", "paddingRight": "24px"}),
+                                html.Div(id="popup-stopnja",
+                                         style={"fontSize": "13px", "marginTop": "4px"}),
+                            ],
+                        ),
+                        html.Div(
+                            id="popup-stats",
+                            style={
+                                "background": "white", "borderRadius": "0 0 10px 10px",
+                                "padding": "12px 14px",
+                                "display": "grid", "gridTemplateColumns": "1fr 1fr 1fr",
+                                "gap": "8px",
+                            },
+                        ),
+                    ],
+                ),
+            ],
         ),
 
         # dummy sink for the clientside callback below
@@ -388,8 +458,9 @@ def update_map(leto, mode):
     Input("mode-radio",   "value"),
     Input("level-store",  "data"),
     Input("search",       "value"),
+    Input("sort-store",   "data"),
 )
-def update_ui(leto, mode, active_levels, search):
+def update_ui(leto, mode, active_levels, search, sort):
     active_levels = active_levels or []
 
     if mode == "obdobje":
@@ -413,12 +484,23 @@ def update_ui(leto, mode, active_levels, search):
     ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr",
               "gap": "10px", "margin": "12px 0 14px"})
 
+    EXTRA_COLS = ["Št. smrti", "Število prebivalcev", "Št. hudih telesnih poškodb"]
     df_f = (
-        df_leto[df_leto["Stopnja"].isin(active_levels)][["Občina", "Stopnja"]]
-        .sort_values("Občina").reset_index(drop=True)
+        df_leto[df_leto["Stopnja"].isin(active_levels)][["Občina", "Stopnja"] + EXTRA_COLS]
+        .reset_index(drop=True)
     )
     if search:
         df_f = df_f[df_f["Občina"].str.contains(search, case=False, na=False)]
+
+    sort_col = sort.get("col", "Občina") if sort else "Občina"
+    sort_asc = sort.get("asc", True)     if sort else True
+    if sort_col == "Stopnja":
+        df_f = df_f.iloc[df_f["Stopnja"].map(STOPNJA_ORDER).argsort()]
+        if not sort_asc:
+            df_f = df_f.iloc[::-1]
+    elif sort_col in df_f.columns:
+        df_f = df_f.sort_values(sort_col, ascending=sort_asc)
+    df_f = df_f.reset_index(drop=True)
 
     # previous year lookup (only in "leto" mode)
     prev_idx = ALL_YEARS.index(leto) - 1 if mode == "leto" and leto in ALL_YEARS else -1
@@ -434,26 +516,40 @@ def update_ui(leto, mode, active_levels, search):
 
     show_prev = mode == "leto" and prev_idx >= 0
 
+    def safe_val(v):
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return "–"
+
+    def sort_hdr(label, btn_id, col, css_class):
+        active = sort_col == col
+        arrow  = (" ▲" if sort_asc else " ▼") if active else ""
+        return html.Button(
+            label + arrow,
+            id=btn_id, n_clicks=0,
+            className=f"sort-btn {css_class}" + (" sort-active" if active else ""),
+        )
+
     header = html.Div(
-        [html.Div("Občina", className="muni-name"),
-         *([ html.Div("Stopnja lani", className="muni-level",
-                      style={"color": "#aaa"}) ] if show_prev else []),
-         html.Div("Stopnja", className="muni-level")],
+        [sort_hdr("Občina", "sort-obcina",  "Občina", "muni-name"),
+         sort_hdr("Stopnja", "sort-stopnja", "Stopnja", "muni-level"),
+         sort_hdr("Št. preb.", "sort-prebiv",  "Število prebivalcev", "muni-num"),
+         sort_hdr("Št. smrti",   "sort-smrti",   "Št. smrti", "muni-num"),
+         sort_hdr("Št. hudih prometnih nesreč", "sort-hude",    "Št. hudih telesnih poškodb",   "muni-num"),
+        ],
         className="muni-header",
     )
     rows = [header]
     for _, row in df_f.iterrows():
         c = COLORS[row["Stopnja"]]
-        prev_stopnja = prev_map.get(row["Občina"])
-        cp = COLORS.get(prev_stopnja, "#aaa") if prev_stopnja else "#aaa"
         rows.append(html.Div([
             html.Div(row["Občina"], className="muni-name"),
-            *([ html.Div(
-                    [html.Span("● ", style={"color": cp}), prev_stopnja] if prev_stopnja else "–",
-                    className="muni-level", style={"color": cp, "opacity": "0.6"},
-                ) ] if show_prev else []),
             html.Div([html.Span("● ", style={"color": c}), row["Stopnja"]],
                      className="muni-level", style={"color": c}),
+            html.Div(safe_val(row.get("Število prebivalcev")),          className="muni-num"),
+            html.Div(safe_val(row.get("Št. smrti")),                    className="muni-num"),
+            html.Div(safe_val(row.get("Št. hudih telesnih poškodb")),   className="muni-num"),
         ], className="muni-row"))
     table = html.Div(rows)
     count = f"Prikazanih {len(df_f)} od {n_total} občin"
@@ -482,6 +578,81 @@ def update_ui(leto, mode, active_levels, search):
 
     footer = f"Podatki za obdobje {period_label} · Slovenija"
     return subtitle, cards, table, count, bar, footer
+
+
+@app.callback(
+    Output("sort-store", "data"),
+    [Input(btn_id, "n_clicks") for btn_id in SORT_COL_MAP],
+    State("sort-store", "data"),
+    prevent_initial_call=True,
+)
+def update_sort(*args):
+    *_, current = args
+    triggered  = ctx.triggered_id
+    col        = SORT_COL_MAP[triggered]
+    if current and current["col"] == col:
+        return {"col": col, "asc": not current["asc"]}
+    return {"col": col, "asc": col == "Občina"}
+
+
+@app.callback(
+    Output("map-popup",       "style"),
+    Output("popup-muni-name", "children"),
+    Output("popup-stopnja",   "children"),
+    Output("popup-stats",     "children"),
+    Input("map-graph",        "clickData"),
+    Input("map-popup-close",  "n_clicks"),
+    State("year-dd",          "value"),
+    State("mode-radio",       "value"),
+    prevent_initial_call=True,
+)
+def show_map_popup(click_data, _close, leto, mode):
+    VISIBLE = {"display": "block"}
+    HIDDEN  = {"display": "none"}
+
+    if ctx.triggered_id == "map-popup-close" or click_data is None:
+        return HIDDEN, "", "", []
+
+    muni_name = click_data["points"][0].get("location", "")
+    df_leto   = get_df(leto, mode)
+    rows      = df_leto[df_leto["Občina"] == muni_name]
+    if rows.empty:
+        return HIDDEN, "", "", []
+
+    row     = rows.iloc[0]
+    stopnja = row["Stopnja"]
+    color   = COLORS[stopnja]
+
+    stopnja_el = html.Span(
+        [html.Span("● ", style={"color": color}), stopnja],
+        style={"color": color, "fontWeight": "600"},
+    )
+
+    def mini_card(value, label, color="#333"):
+        return html.Div([
+            html.Div(str(value),
+                     style={"fontSize": "24px", "fontWeight": "700", "color": color}),
+            html.Div(label,
+                     style={"fontSize": "11px", "color": "#777", "marginTop": "3px",
+                            "lineHeight": "1.3"}),
+        ], style={
+            "background": "#f5f5f5", "borderRadius": "8px",
+            "padding": "10px 6px", "textAlign": "center", "border": "1px solid #eee",
+        })
+
+    def safe_int(val):
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return "–"
+
+    stats = [
+        mini_card(safe_int(row.get("Št. smrti", "–")),                  "Smrti",         "#e63946"),
+        mini_card(safe_int(row.get("Št. hudih telesnih poškodb", "–")), "Hude poškodbe", "#f4a261"),
+        mini_card(safe_int(row.get("Št. lažjih telesnih poškodb", "–")),"Lažje poškodbe","#333"),
+    ]
+
+    return VISIBLE, muni_name, stopnja_el, stats
 
 
 if __name__ == "__main__":
